@@ -1,0 +1,7 @@
+{
+    "files.associations": {
+        "*.tcc": "cpp",
+        "type_traits": "cpp"
+    },
+    "idf.pythonInstallPath": "/usr/bin/python3"
+}
