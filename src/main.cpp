@@ -327,7 +327,7 @@ void loop()
 
   if (systemMode == calibrate && !isDispensing)
   {
-    yellowButton.led.turnOn(false);
+    yellowButton.led.flash(500);
     greenButton.led.flash(500);
     blueButton.led.flash(500);
     whiteButton.led.flash(500);
@@ -337,6 +337,29 @@ void loop()
       sendLogMessage("Calibration mode timed out... returning to manual mode");
       turnOnAllLeds(true);
       systemMode = manual;
+    }
+  }
+
+  if (systemMode == calibrate && isDispensing)
+  {
+    yellowButton.led.flash(500);
+    if (waterType == sparkling)
+    {
+        greenButton.led.flash(500);
+        whiteButton.led.turnOn(true);
+        blueButton.led.turnOn(true);
+    }
+    else if (waterType == alkaline)
+    {
+        whiteButton.led.flash(500);
+        greenButton.led.turnOn(true);
+        blueButton.led.turnOn(true);
+    }
+    else if (waterType == cold)
+    {
+        blueButton.led.flash(500);
+        greenButton.led.turnOn(true);
+        whiteButton.led.turnOn(true);
     }
   }
 
