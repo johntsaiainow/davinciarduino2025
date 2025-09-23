@@ -27,8 +27,8 @@ const int agitator_enable_time = 120000;
 const int agitator_interval = 1800000;
 
 // yellow button
-const int autofillButtonPressTime = 500;
-const int calibrationModeButtonPressTime = 3000;
+const int autofillButtonPressTime = 2000;
+const int calibrationModeButtonPressTime = 5000;
 
 // autofill
 const int autofill_enable = 3000;

@@ -2020,12 +2020,14 @@ void handleYellowButtonStateChanged()
     {
       systemMode = calibrate;
       calibrationModeStartTime = currentTime;
+      sendLogMessage("Entered Calibration Mode");
     }
     else if (pressDuration > autofillButtonPressTime && systemMode != calibrate && systemMode != hotWaterDispense)
     {
-      systemMode = hotWaterDispense;
+      systemMode = autofill;
       autofillStartTime = currentTime;
       redButton.led.turnOn(false);
+      sendLogMessage("Entered Autofill Mode");
     }
   }
   else if (yellowButton.isReleased && yellowButton.hasStateChanged)
