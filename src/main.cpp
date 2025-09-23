@@ -187,6 +187,7 @@ void loop()
   // checkFilterStatus();
   currentTime = millis();
   run();
+  sendLogMessage("Loop: systemMode: " + String(systemMode) + ", isDispensing: " + String(isDispensing));
   
   processHotPreset();
   checkChildSafetySwitch();
@@ -304,7 +305,7 @@ void loop()
   }
 
   // === UPDATED: enforce stop at target volume whenever auto is active ===
-  if ((isAutoDispensing || systemMode == autofill || systemMode == calibrate) && isDispensing)
+  if ((isAutoDispensing || systemMode == autofill) && isDispensing)
   {
     yellowButton.led.flash(500);
     stopAutofill(waterType, autoFillStopVolume);
@@ -1780,18 +1781,22 @@ void handleRedButtonStateChanged()
         turnOnHotWater(false);
         sendStopDispenseStats(hot);
         turnOnAllLeds(true);
-        systemMode = manual;
+        systemMode = manual; // Set to manual ONLY when dispense stops
         memset(previouslyPressedButtons, 0, 5*sizeof(*previouslyPressedButtons));
         sendLogMessage("Hot water dispense stopped and returned to manual mode.");
       }
       else if (systemMode == hotWaterDispense && !isDispensing && previouslyPressedButtons[1] == YELLOWBUTTON)
       {
+        // Sequence incomplete, just clear sequence and return to manual
+        turnOnAllLeds(true); // Return all LEDs to solid on
         systemMode = manual;
         memset(previouslyPressedButtons, 0, 5*sizeof(*previouslyPressedButtons));
         sendLogMessage("Red button released. Sequence incomplete. Returning to manual mode.");
       }
       else if (systemMode == hotWaterDispense && !isDispensing && previouslyPressedButtons[1] == REDBUTTON)
       {
+        // Sequence incomplete, just clear sequence and return to manual
+        turnOnAllLeds(true); // Return all LEDs to solid on
         systemMode = manual;
         memset(previouslyPressedButtons, 0, 5*sizeof(*previouslyPressedButtons));
         sendLogMessage("Red button released. Sequence incomplete. Returning to manual mode.");
@@ -1881,7 +1886,7 @@ void handleWhiteButtonStateChanged()
         else 
         {
           turnOnAlkalineWater(false);
-          sendStopDispenseStats(cold);
+          sendStopDispenseStats(alkaline);
           autofillVolume.alkVolume = flowMeter->getTotalVolume() * 10000 - currentVolume;
           currentVolume = flowMeter->getTotalVolume() * 10000;
           sendLogMessage("autofill alkaline volume set to: " + String(autofillVolume.alkVolume));
@@ -1967,6 +1972,12 @@ void handleFilterButtonStateChanged()
     greenButton.led.lastLedFlashTime = millis();
     blueButton.led.lastLedFlashTime = millis();
     redButton.led.lastLedFlashTime = millis();
+    if (systemMode == calibrate)
+    {
+      sendLogMessage("Exiting Calibration Mode via Filter button.");
+      turnOnAllLeds(true);
+      systemMode = manual;
+    }
     systemMode = configuration;
     sendLogMessage("Entering Configuration Mode");
   }
@@ -2003,6 +2014,12 @@ void handleYellowButtonStateChanged()
     {
       stopAndSaveCalibration();
       memset(previouslyPressedButtons, 0, 5*sizeof(*previouslyPressedButtons));
+    }
+    else if (systemMode == calibrate && !isDispensing)
+    {
+      sendLogMessage("Exiting Calibration Mode via Yellow button.");
+      turnOnAllLeds(true);
+      systemMode = manual;
     }
     else if (systemMode == autofill)
     {
@@ -2640,7 +2657,6 @@ void stopAndSaveCalibration()
       break;
   }
   turnOnAllLeds(true);
-  systemMode = manual;
 }
 
 bool areAnyOtherButtonsPressed(Button button)
