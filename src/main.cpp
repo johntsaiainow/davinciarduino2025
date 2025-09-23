@@ -2005,6 +2005,7 @@ void handleYellowButtonStateChanged()
       {
         sendLogMessage("Hot water safety sequence disabled");
       }
+      systemMode = manual;
     }
   }
   else if (yellowButton.isPressed)
