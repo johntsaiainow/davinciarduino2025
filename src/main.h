@@ -29,6 +29,7 @@ const int agitator_interval = 1800000;
 // yellow button
 const int autofillButtonPressTime = 2000;
 const int calibrationModeButtonPressTime = 5000;
+const unsigned long hotWaterSequenceTimeout = 5000;
 
 // autofill
 const int autofill_enable = 3000;

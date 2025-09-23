@@ -1678,9 +1678,10 @@ void handleRedButtonStateChanged()
       if (systemMode == manual && !isDispensing)
       {
         turnOnAllLeds(false);
-        yellowButton.led.turnOn(true);
+        yellowButton.led.turnOn(true); // Yellow LED solid on to indicate next step
         systemMode = hotWaterDispense;
         hotWaterDispenseSequenceStartTime = millis();
+        sendLogMessage("Red button pressed. Entered hotWaterDispense mode. Waiting for Yellow.");
       }
       else if (systemMode == calibrate)
       {
@@ -1688,15 +1689,34 @@ void handleRedButtonStateChanged()
         turnOnAllLeds(true);
         systemMode = manual;
       }
-      else if (systemMode == hotWaterDispense && !isDispensing && previouslyPressedButtons[1] == YELLOWBUTTON && previouslyPressedButtons[2] == REDBUTTON)
+      else if (systemMode == hotWaterDispense && !isDispensing && previouslyPressedButtons[1] == YELLOWBUTTON && previouslyPressedButtons[2] == REDBUTTON) // This is the third red button press
       {
-        turnOnAllLeds(false);
-        redButton.led.turnOn(true);
-        turnOnHotWater(true);
+        if (millis() - hotWaterDispenseSequenceStartTime < hotWaterSequenceTimeout)
+        {
+          turnOnAllLeds(false); // Clear all LEDs
+          redButton.led.turnOn(true); // Red LED solid on for dispense
+          turnOnHotWater(true); // Initiate hot water dispense
+          // systemMode = manual; // REMOVED: Do not set to manual yet
+          memset(previouslyPressedButtons, 0, 5*sizeof(*previouslyPressedButtons)); // Clear sequence
+          hotWaterDispenseSequenceStartTime = 0; // Clear sequence timer
+          sendLogMessage("Red button pressed. Hot water dispense initiated (Red -> Yellow -> Red sequence). System mode remains hotWaterDispense.");
+        }
+        else
+        {
+          // Timeout occurred, reset sequence
+          turnOnAllLeds(true); // Return all LEDs to solid on
+          systemMode = manual; // Return to manual mode
+          memset(previouslyPressedButtons, 0, 5*sizeof(*previouslyPressedButtons)); // Clear sequence
+          hotWaterDispenseSequenceStartTime = 0; // Clear sequence timer
+          sendLogMessage("Hot water dispense sequence timed out. Returning to manual mode.");
+        }
       }
       else if (systemMode == hotWaterDispense && !isDispensing)
       {
-        turnOnAllLeds(true);
+        // If red button is pressed again in hotWaterDispense mode, and it's not part of the sequence,
+        // we should probably just ignore it or provide feedback.
+        // For now, let's just log it and not change LED states or mode.
+        sendLogMessage("Red button pressed again in hotWaterDispense mode (not part of sequence).");
       }
       // === UPDATED: allow hot auto cancel too ===
       else if (systemMode == autofill || isAutoDispensing)
@@ -1754,6 +1774,7 @@ void handleRedButtonStateChanged()
     }
     else if (redButton.isReleased && redButton.hasStateChanged)
     {
+      sendLogMessage("Red button released. systemMode: " + String(systemMode) + ", isDispensing: " + String(isDispensing));
       if (systemMode == hotWaterDispense && isDispensing)
       {
         turnOnHotWater(false);
@@ -1761,16 +1782,19 @@ void handleRedButtonStateChanged()
         turnOnAllLeds(true);
         systemMode = manual;
         memset(previouslyPressedButtons, 0, 5*sizeof(*previouslyPressedButtons));
+        sendLogMessage("Hot water dispense stopped and returned to manual mode.");
       }
       else if (systemMode == hotWaterDispense && !isDispensing && previouslyPressedButtons[1] == YELLOWBUTTON)
       {
         systemMode = manual;
         memset(previouslyPressedButtons, 0, 5*sizeof(*previouslyPressedButtons));
+        sendLogMessage("Red button released. Sequence incomplete. Returning to manual mode.");
       }
       else if (systemMode == hotWaterDispense && !isDispensing && previouslyPressedButtons[1] == REDBUTTON)
       {
         systemMode = manual;
         memset(previouslyPressedButtons, 0, 5*sizeof(*previouslyPressedButtons));
+        sendLogMessage("Red button released. Sequence incomplete. Returning to manual mode.");
       }
       else if (systemMode == configuration)
       {
@@ -1961,6 +1985,7 @@ void handleFilterButtonStateChanged()
 
 void handleYellowButtonStateChanged()
 {
+  sendLogMessage("handleYellowButtonStateChanged called. systemMode: " + String(systemMode) + ", yellowButton.isPressed: " + String(yellowButton.isPressed) + ", yellowButton.hasStateChanged: " + String(yellowButton.hasStateChanged));
   if ((systemMode == safety || systemMode == chillerBucketRefill) || (systemMode == manual && !isDispensing && (greenButton.isPressed || blueButton.isPressed || redButton.isPressed || whiteButton.isPressed)))
   {
     return;
@@ -1985,14 +2010,34 @@ void handleYellowButtonStateChanged()
       turnOnAllLeds(true);
       systemMode = manual;
     }
-    else if (systemMode == hotWaterDispense && previouslyPressedButtons[1] == YELLOWBUTTON)
+    else if (systemMode == hotWaterDispense && previouslyPressedButtons[1] == REDBUTTON) // Check if RED was pressed before YELLOW
     {
-      turnOnAllLeds(true);
+      // This is the second step of the sequence: Red then Yellow
+      if (millis() - hotWaterDispenseSequenceStartTime < hotWaterSequenceTimeout)
+      {
+        turnOnAllLeds(false); // Clear all LEDs
+        redButton.led.turnOn(true); // Red LED solid on to indicate next step
+        systemMode = hotWaterDispense; // Stay in hotWaterDispense mode
+        hotWaterDispenseSequenceStartTime = millis(); // Reset timer for next step (red button press)
+        sendLogMessage("Yellow button pressed. Second step of hot water sequence (Red -> Yellow). Waiting for Red.");
+      }
+      else
+      {
+        // Timeout occurred, reset sequence
+        turnOnAllLeds(true); // Return all LEDs to solid on
+        systemMode = manual; // Return to manual mode
+        memset(previouslyPressedButtons, 0, 5*sizeof(*previouslyPressedButtons)); // Clear sequence
+        hotWaterDispenseSequenceStartTime = 0; // Clear sequence timer
+        sendLogMessage("Hot water dispense sequence timed out. Returning to manual mode.");
+      }
     }
     else if (systemMode == hotWaterDispense)
     {
-      yellowButton.led.turnOn(false);
-      hotWaterDispenseSequenceStartTime = millis();
+      // If yellow button is pressed in hotWaterDispense mode, but not as part of the sequence
+      // (i.e., red was not the previously pressed button), then turn off yellow LED and reset timer.
+      yellowButton.led.turnOn(false); // Turn yellow LED off
+      hotWaterDispenseSequenceStartTime = millis(); // Reset timer
+      sendLogMessage("Yellow button pressed in hotWaterDispense mode (not part of sequence).");
     }
     else if (systemMode == configuration)
     {
@@ -2005,7 +2050,20 @@ void handleYellowButtonStateChanged()
       {
         sendLogMessage("Hot water safety sequence disabled");
       }
+      // Explicitly set all LEDs to solid on when returning to manual mode
+      greenButton.led.turnOn(true);
+      greenButton.led.lastLedFlashTime = 0;
+      whiteButton.led.turnOn(true);
+      whiteButton.led.lastLedFlashTime = 0;
+      blueButton.led.turnOn(true);
+      blueButton.led.lastLedFlashTime = 0;
+      redButton.led.turnOn(true);
+      redButton.led.lastLedFlashTime = 0;
+      yellowButton.led.turnOn(true);
+      yellowButton.led.lastLedFlashTime = 0;
+
       systemMode = manual;
+      yellowButton.hasStateChanged = true; // Explicitly set to true to allow release detection
     }
   }
   else if (yellowButton.isPressed)
@@ -2032,6 +2090,7 @@ void handleYellowButtonStateChanged()
   }
   else if (yellowButton.isReleased && yellowButton.hasStateChanged)
   {
+    sendLogMessage("Yellow button released. systemMode: " + String(systemMode));
     if (systemMode == autofill)
     {
       greenButton.led.turnOn(true);
@@ -2100,6 +2159,7 @@ void turnOnColdWater(bool isEnabled)
 
 void turnOnHotWater(bool isEnabled)
 {
+  sendLogMessage("turnOnHotWater called with isEnabled: " + String(isEnabled));
   isEnabled ? waterType = hot : waterType = none;
   turnOnMainValve(isEnabled);
   turnOnHotValve(isEnabled);
@@ -2177,6 +2237,7 @@ void stopAutofill(WaterType waterType, unsigned long stopVolume)
 
 void turnOnMainValve(bool isEnabled)
 {
+  sendLogMessage("turnOnMainValve called with isEnabled: " + String(isEnabled));
   isDispensing = isEnabled;
   dispenseStartTime = currentTime;
   sr.set(MAIN_V, isEnabled);
@@ -2187,6 +2248,7 @@ void turnOnMainValve(bool isEnabled)
   {
     currentDispenseStartTime = millis();
   }
+  sendLogMessage("isDispensing set to: " + String(isDispensing));
 }
 
 void turnOnLevelValve(bool isEnabled)
@@ -2245,10 +2307,15 @@ void turnOnWaterPump(bool isEnabled)
 void turnOnAllLeds(bool isEnabled)
 {
   greenButton.led.turnOn(isEnabled);
+  greenButton.led.lastLedFlashTime = 0; // Reset flash time
   whiteButton.led.turnOn(isEnabled);
+  whiteButton.led.lastLedFlashTime = 0; // Reset flash time
   blueButton.led.turnOn(isEnabled);
+  blueButton.led.lastLedFlashTime = 0; // Reset flash time
   redButton.led.turnOn(isEnabled);
+  redButton.led.lastLedFlashTime = 0; // Reset flash time
   yellowButton.led.turnOn(isEnabled);
+  yellowButton.led.lastLedFlashTime = 0; // Reset flash time
 }
 
 void cancelAutofill()
@@ -2261,6 +2328,7 @@ void cancelAutofill()
 
 void stopDispense()
 {
+  sendLogMessage("stopDispense called. waterType: " + String(waterType));
   // stop
   if (systemMode == chillerBucketRefill)
   {
