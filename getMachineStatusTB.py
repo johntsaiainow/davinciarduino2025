@@ -1,12 +1,49 @@
+import os
 import serial
 import sys
 import time
 import json
+from pathlib import Path
 from tb_device_mqtt import TBDeviceMqttClient, TBPublishInfo
 
-client = TBDeviceMqttClient("192.168.1.36", "wQnk6IsIerDkh0sVIhAt")
 SERIAL_PORT = '/dev/ttyUSB0'
 BAUDRATE = 115200
+
+
+def load_dotenv(path):
+    if not path.is_file():
+        return
+    for raw in path.read_text().splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):].strip()
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+def require_thingsboard_config():
+    load_dotenv(Path(__file__).resolve().parent / ".env")
+    names = ("TB_BROKER_HOST", "TB_ACCESS_TOKEN")
+    missing = [name for name in names if not os.environ.get(name, "").strip()]
+    if missing:
+        print(
+            "Error: missing environment variable(s): " + ", ".join(missing),
+            file=sys.stderr,
+        )
+        print(
+            "Copy .env.example to .env and set them, or export them in the shell.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    return os.environ["TB_BROKER_HOST"].strip(), os.environ["TB_ACCESS_TOKEN"].strip()
+
 
 def read_line(line):
     line = line.decode('ascii')
@@ -14,6 +51,8 @@ def read_line(line):
     return line
 
 def main():
+    broker_host, access_token = require_thingsboard_config()
+    client = TBDeviceMqttClient(broker_host, access_token)
 
     ser = serial.Serial()
     ser.baudrate = int(BAUDRATE)
