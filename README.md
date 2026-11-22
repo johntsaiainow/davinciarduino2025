@@ -4,7 +4,7 @@ Main controller firmware for the DrinkStation DaVinci beverage dispenser. The st
 
 Commits in this repository are authored by John Tsai. The 2025 history describes an upgrade of features from a prior `da2021` tree onto this STM32 Arduino / PlatformIO project.
 
-The firmware is the real-time machine layer: dispensing, thermal control, pumps and valves, flow measurement, filter tracking, button and LED UI, a DS1302 real-time clock, and a serial JSON command interface. A search of the source, PlatformIO config, and `docs/` found no on-device inference runtime and no trained model (no TensorFlow Lite Micro, Edge Impulse, CMSIS-NN, or weight array).
+The firmware is the real-time machine layer: dispensing, thermal control, pumps and valves, flow measurement, filter tracking, button and LED UI, a DS1302 real-time clock, and a serial JSON command interface. The ice-bank and hot-tank paths are fixed-threshold controllers plus compile-time NTC lookup tables. Nothing in those files, and nothing in the git history of this repository, updates a coefficient, fits a curve, or runs an inference runtime.
 
 ## Hardware platform
 
@@ -129,21 +129,56 @@ Hot water, when `isHotWaterSafetySequenceEnabled` is true, follows a red, then y
 
 Remote holds (`holdSparkling`, `holdCold`, `holdAlkaline`) and `isAutoDispensing` keep the matching pump path asserted the same way a held button does.
 
-### Thermal and filter control
+### Thermal control
 
-- **Compressor** (`CompressorControl::run`): if `ntc.cold_ntc` stays above `ChillerBucketMax` for 60000 ms, the compressor and fan turn on. If it stays below `ChillerBucketMin` for 60000 ms, both turn off. Skipped during chiller-bucket refill and when compressor control is disabled.
-- **Hot tank** (`HotTankControl::run`): on below `HotTankMin`, off above `HotTankMax`, when the tank is enabled.
-- **Agitator** (`AgitatorPumpControl::run`): on for 120000 ms, then off for 1800000 ms.
-- **Filter** (`FilterStatusCheck`): not ok when the stored dispense total exceeds 5000000 mL, or when `getEpochTime() - lastFilterResetTime` exceeds 15552000 seconds (15552000 / 86400 = 180 days). The green status LED flashes while the filter is not ok.
-- **Hot presets**: `blacktea` targets 90°C and defaults to 280; `cupnoodle` targets 96°C and defaults to 300. Both clamp a requested volume at 1500. `processHotPreset()` enables the hot tank, and once `ntc.hot_ntc` reaches the target it calls `autofillHotWater()`.
+Ice-bank temperature is `ntc.cold_ntc`, the cold NTC on `PA0`. The compressor does not read `ICE_PIN` (`PC2`). That pin is averaged inside `readTemperature()` and then discarded. Hot-tank temperature is `ntc.hot_ntc` from `PA1`. Both temperatures are refreshed every 5000 ms. `src/temp_read.cpp`, `src/CompressorControl.cpp`, and `src/HotTankControl.cpp` are unchanged since commit `2259a47` ("Upgrading features from da2021"). This repository has no other branch that carries different thermal code.
 
-`temp default` writes these setpoints (the command log labels them °C): chiller max 0.4, chiller min -1.8, hot max 88, hot min 85. Other named bands live in `handleTempCommand`, `handleSetChillerBucketTempCommand`, and `handleSetHotTankTempCommand` (`coldest`, `lesscold`, `cold_saving` / `saving`, `hottest`, `lesshot`, `hot_saving`).
+**Ice bank / compressor** (`CompressorControl::run`, called from `loop()` when `isCompressorControlEnabled` is true and the mode is not `chillerBucketRefill`). Outputs are compressor `PA8` and fan `PC14`, switched together.
+
+The law is a deadband with a 60000 ms confirmation. It does not compute a slope, integral, or prediction.
+
+- While `ntc.cold_ntc > ChillerBucketMax`, the first sample latches `compressorCrossUpperLimitTime`. When `millis()` passes that latch by 60000 ms, and the compressor is off, compressor and fan turn on.
+- While `ntc.cold_ntc < ChillerBucketMin`, the same 60000 ms latch turns both off.
+- While the reading is between the two limits, both latches clear and the outputs stay as they are.
+
+**Hot tank / heater** (`HotTankControl::run`, called from `loop()` only when `isHotTankEnabled`). Output is `PA15`.
+
+- `ntc.hot_ntc > HotTankMax` turns the heater off immediately.
+- `ntc.hot_ntc < HotTankMin` turns the heater on immediately.
+- A reading between the limits leaves the heater as it is.
+
+`HotTankControl::runPostDispense` ignores `HotTankMin`. It turns the heater on when `ntc.hot_ntc < HotTankMax`, and off when the reading is above `HotTankMax` and below `HotTankMax + 3`. `checkLastHotWaterDispenseDateTime()` calls it when `getEpochTime() - 120` is not greater than `lastHotWaterDispenseTime` (the dispense is 120 seconds old or newer). `loop()` then calls `run()`, so a reading above `HotTankMax` still ends the iteration off, and a reading strictly inside the min/max band is forced on for that 120 second window.
+
+The same function flashes the red button LED when `getEpochTime() - lastHotWaterDispenseTime` exceeds 2592000 seconds (30 days). The following `else if` uses 2678400 seconds (31 days) and would disable the heater, but any age past 31 days is already past 30 days, so that branch does not execute.
+
+**Setpoints.** `getCurrentTempConfig()` loads `TempConfig` from EEPROM address 0. `temp write` stores it back. The `setchillerbucket*` and `sethottank*` commands, and the config-mode button handlers, change the RAM copy only. Named bands in `handleSetChillerBucketTempCommand` and `handleSetHotTankTempCommand`, which the log text labels °C:
+
+| Name | Chiller max / min | Hot max / min |
+| --- | --- | --- |
+| `default` | 0.4 / -1.8 | 88 / 85 |
+| `lesscold` / `lesshot` | 0.5 / -1.0 | 85 / 82 |
+| `coldest` / `hottest` | 0.3 / -2.1 | 91 / 88 |
+| `saving` | 1 / -0.4 | 83 / 78 |
+
+`handleTempCommand("lesscold")` has an empty body. `cold_saving` in that function uses the same chiller pair as `saving`. In `chillerBucketConfig`, green selects `default`, blue `coldest`, white `lesscold`, and red `saving`. In `hotTankConfig`, green selects `default`, blue `saving`, white `lesshot`, and red `hottest`. Blue released from `configuration` enters chiller config. Red released from `configuration` enters hot-tank config.
+
+**Hot presets.** `blacktea` stores the current hot limits, sets a target of 90 and a volume integer of 280 (clamp 1500), and enters `HotPresetHeating`. `cupnoodle` does the same with 96 and 300. `processHotPreset()` enables the heater and, once `ntc.hot_ntc >= presetTargetTempC`, calls `autofillHotWater()`. It does not write a new `HotTankMax`. `HotTankControl::run` still turns the heater off above the stored max, so a target above that max is not held by the heater loop. On hot-water stop, the saved limits are copied back.
+
+**Agitator and filter.** `AgitatorPumpControl::run` runs the agitator 120000 ms on and 1800000 ms off. `FilterStatusCheck` marks the filter not ok above 5000000 mL or when `getEpochTime() - lastFilterResetTime` exceeds 15552000 seconds (180 days). The green status LED flashes while the filter is not ok.
 
 ### Sensing
 
-**Temperature.** Every 5000 ms, `readTemperature()` reads five ADC channels. `analogReadResolution(12)` is set inside `ADC_RD()`, which sums 200 conversions and divides by `read_number / 4` (50). Ten of those results are reduced by `maxminaverage(..., 10, 6)`, which sorts the window and averages the middle four samples. Cold and the third NTC use `temp_change_cold`; the hot NTC uses `temp_change_hot`. Each converter walks a 141-point table whose comments run from -20°C to 120°C and linearly interpolates. The returned integer is divided by 100 before it is stored. A raw value below the first table entry becomes -100, which `systemCheck()` reports as a missing sensor. The ice and hot-level channels are averaged into local variables and not stored.
+**Temperature.** Every 5000 ms, `readTemperature()` reads five ADC channels. `analogReadResolution(12)` is set inside `ADC_RD()`, which sums 200 conversions and divides by `read_number / 4` (50). Ten of those results are reduced by `maxminaverage(..., 10, 6)`, which sorts the window and averages the middle four samples. Cold and the third NTC use `temp_change_cold`; the hot NTC uses `temp_change_hot`. The returned integer is divided by 100 before it is stored.
 
-The three tables are `tem_dat_cold`, `tem_dat_hot`, and `tem_dat` in `src/temp_read.cpp`, 141 `unsigned int` entries each. At the 32-bit `unsigned int` width of the Arm target selected by `genericSTM32F103RC`, that is 141 × 4 × 3 = **1692 bytes** of tables. `tem_dat` has no caller in this tree. This is a source-level size, not a linker measurement of flash.
+Each converter is a fixed piecewise-linear lookup, not an online fit. The tables are `const` and have no writer in this tree. Comments label index 0 as -20°C and index 140 as 120°C. Between `table[i]` and `table[i + 1]` the code interpolates one degree:
+
+```text
+dd = ((adc - table[i]) * 100) / (table[i + 1] - table[i]) + (i - 20) * 100
+```
+
+An ADC count below `table[0]` returns -10000, stored as -100, which `systemCheck()` reports as a missing sensor. A count at or above `table[121]` returns 20000, stored as 200.
+
+The three tables are `tem_dat_cold`, `tem_dat_hot`, and `tem_dat`, 141 `unsigned int` entries each, and all three differ in every entry. At the 32-bit `unsigned int` width of the Arm target selected by `genericSTM32F103RC`, that is 141 × 4 × 3 = **1692 bytes**. `tem_dat` has no caller. `tem_dat_cold` is constant 11373 from index 70 (comment: 50°C) through index 140, so every cold-path count at or above 11373 takes the 20000 sentinel. `tem_dat_hot` keeps increasing through index 140 (value 12108). This size is counted from source, not from a linker map. The ice and hot-level channels are averaged into local variables and not stored.
 
 **Flow.** `FlowMeter` is constructed on the `PC0` interrupt with `FHKCS_1mm_0deg`:
 
@@ -235,7 +270,7 @@ Values below are taken from source constants or counted from them. Cells marked 
 | Board power or current | TBD | Not measured in this repo |
 | NTC accuracy | TBD | Tables are present; no calibration report is stored |
 | Dispense volume accuracy | TBD | No measured error is stored |
-| On-device model size, tensor arena, latency, accuracy | Not applicable | No inference runtime or model is present in this repository |
+| On-device model size, tensor arena, latency, accuracy | Not applicable | Ice-bank and hot-tank code is a fixed deadband plus NTC tables. No learned parameters are stored or updated |
 
 ## Project layout
 
