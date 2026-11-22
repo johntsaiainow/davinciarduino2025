@@ -226,9 +226,26 @@ pio device monitor
 | `getNTC2.py` | Plot `ntcOneCurrentTemp` and `ntcTwoCurrentTemp`. The current firmware status object does not emit those keys |
 | `gui.py` | PySimpleGUI window; appends rows to `machine_status.csv` |
 | `setDateTime.py` | Send `setdatetime` from the host clock, then `factoryreset` |
-| `getMachineStatusTB.py` | Forward status with a ThingsBoard device MQTT client |
+| `getMachineStatusTB.py` | Forward status with a ThingsBoard device MQTT client. Broker host and device token come from `TB_BROKER_HOST` and `TB_ACCESS_TOKEN` |
 
-Broker address and access token for that last script are hardcoded in the file and are omitted here.
+### ThingsBoard status forwarder
+
+`getMachineStatusTB.py` reads each `getmachinestatus` line and publishes it with `tb_device_mqtt`. The script requires two environment variables:
+
+| Variable | Meaning |
+| --- | --- |
+| `TB_BROKER_HOST` | ThingsBoard MQTT host |
+| `TB_ACCESS_TOKEN` | Device access token |
+
+If either name is missing or empty, the script exits with an error and does not print the values. A `.env` file next to the script fills in names that are not already exported. `.env` is listed in `.gitignore`.
+
+```bash
+cp .env.example .env
+# Edit .env with the host and a newly issued device token.
+python3 getMachineStatusTB.py
+```
+
+The device token that used to be committed in this file is still in git history. Regenerate it in ThingsBoard and put only the new token in `.env` or the shell environment.
 
 ## Results / Metrics
 
@@ -288,6 +305,7 @@ src/                  Controller firmware
 lib/                  Vendored FlowMeter, ShiftRegister74HC595, ErriezDS1302
 docs/map.md           AquaMesh sketch
 platformio.ini
+.env.example          Placeholder host and token names for getMachineStatusTB.py
 getMachineStatus.py  getMachineStatusTB.py  getNTC.py  getNTC2.py
 gui.py  setDateTime.py
 machine_status.csv    Captured getmachinestatus rows
